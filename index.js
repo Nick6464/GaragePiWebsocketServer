@@ -1,29 +1,48 @@
 const dotenv = require('dotenv')
 const express = require('express')
 const jwtMiddleware = require('./jwtMiddleware')
+const WebSocket = require('ws')
 require('dotenv').config()
+
+const connections = new Map()
 
 const { hostname, port } = process.env
 
 const app = express()
+const wss = new WebSocket.Server({ noServer: true })
 
 app.use(express.json())
 
-// Button Press for 0.2 seconds
-app.get('/press', jwtMiddleware.jwtVerificationMiddleware, (req, res) => {
-  relay.writeSync(1)
-  setTimeout(() => {
-    relay.writeSync(0)
-  }, 250)
-  res.send('Relay is ON')
+app.post('/press', jwtMiddleware, (req, res) => {
+  const { raspberryPiId } = req.body
+
+  const ws = connections.get(raspberryPiId)
+  if (!ws) {
+    return res.status(404).json({ error: 'Raspberry Pi not found' })
+  }
+
+  const token = req.headers['authorization']
+  ws.send(JSON.stringify({ command: 'press', token }))
+
+  res.json({ message: 'Request sent to Raspberry Pi' })
 })
 
 app.listen(port, hostname, () => {
   console.log(`Server running at https://${hostname}:${port}/`)
 })
 
-// Cleanup and unexport the relay GPIO pin on program exit
-process.on('SIGINT', () => {
-  relay.unexport()
-  process.exit()
+wss.on('connection', (ws, req) => {
+  const raspberryPiId = req.headers['raspberry-pi-id']
+  connections.set(raspberryPiId, ws)
+
+  console.log('New WebSocket connection')
+
+  ws.on('message', (message) => {
+    console.log('Received: %s', message)
+  })
+
+  ws.on('close', () => {
+    console.log('WebSocket connection closed')
+    connections.delete(raspberryPiId)
+  })
 })
